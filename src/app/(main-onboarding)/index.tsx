@@ -328,7 +328,7 @@ export default function MainOnboardingScreen() {
     setIsSubmitting(true);
     try {
       await saveMainOnboardingProfile(user.id, form);
-      router.replace("/welcome" as Href);
+      router.replace("/assessment" as Href);
     } catch {
       setErrorMessage("Unable to save onboarding data. Please try again.");
     } finally {

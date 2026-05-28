@@ -1,16 +1,17 @@
 import { useAuth } from "@clerk/clerk-expo";
 import { Redirect, Stack, type Href } from "expo-router";
+import { StyleSheet, View } from "react-native";
 import { onboardingTheme } from "@/constants/onboarding-theme";
 
 export default function OnboardingLayout() {
   const { isLoaded, isSignedIn } = useAuth();
 
   if (!isLoaded) {
-    return null;
+    return <View style={styles.loadingScreen} />;
   }
 
   if (isSignedIn) {
-    return <Redirect href={"/(tabs)" as Href} />;
+    return <Redirect href={"/" as Href} />;
   }
   return (
     <Stack
@@ -22,3 +23,10 @@ export default function OnboardingLayout() {
     />
   );
 }
+
+const styles = StyleSheet.create({
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: onboardingTheme.background,
+  },
+});

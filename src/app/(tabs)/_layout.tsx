@@ -1,6 +1,7 @@
 import { useAuth } from "@clerk/clerk-expo";
 import { Redirect, Stack, type Href } from "expo-router";
 import { useEffect, useState } from "react";
+import { StyleSheet, View } from "react-native";
 
 import { onboardingTheme } from "@/constants/onboarding-theme";
 import { isMainOnboardingComplete } from "@/lib/user-onboarding";
@@ -39,7 +40,7 @@ export default function TabsLayout() {
   }, [isSignedIn, userId]);
 
   if (!isLoaded || isCheckingOnboarding) {
-    return null;
+    return <View style={styles.loadingScreen} />;
   }
 
   if (!isSignedIn) {
@@ -60,3 +61,10 @@ export default function TabsLayout() {
     />
   );
 }
+
+const styles = StyleSheet.create({
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: onboardingTheme.background,
+  },
+});

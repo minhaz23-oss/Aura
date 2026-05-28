@@ -29,7 +29,9 @@ export default function RootLayout() {
 
   return (
     <ClerkProvider publishableKey={clerkPublishableKey} tokenCache={tokenCache}>
-      <GestureHandlerRootView style={{ flex: 1 }}>
+      <GestureHandlerRootView
+        style={{ flex: 1, backgroundColor: onboardingTheme.background }}
+      >
         <StatusBar style="light" />
         <Stack
           screenOptions={{
@@ -40,6 +42,7 @@ export default function RootLayout() {
           <Stack.Screen name="onboarding" options={{ animation: "none" }} />
           <Stack.Screen name="(auth)" options={{ animation: "none" }} />
           <Stack.Screen name="(main-onboarding)" options={{ animation: "none" }} />
+          <Stack.Screen name="assessment" options={{ animation: "none" }} />
           <Stack.Screen name="welcome" options={{ animation: "none" }} />
           <Stack.Screen name="(tabs)" options={{ animation: "none" }} />
           <Stack.Screen name="sso-callback" options={{ animation: "none" }} />

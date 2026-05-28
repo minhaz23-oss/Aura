@@ -1,19 +1,17 @@
 import { useAuth } from "@clerk/clerk-expo";
 import { Image } from "expo-image";
 import { Redirect, useRouter, type Href } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import Animated, {
   Easing,
   useAnimatedStyle,
   useSharedValue,
-  withDelay,
   withSpring,
   withTiming,
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
-import { AuthPrimaryButton } from "@/components/auth/AuthPrimaryButton";
 import { appFonts } from "@/constants/fonts";
 import { onboardingTheme } from "@/constants/onboarding-theme";
 
@@ -25,19 +23,23 @@ const SUBTITLE = "Let's become better";
 export default function WelcomeScreen() {
   const router = useRouter();
   const { isLoaded, isSignedIn } = useAuth();
-  const [typedTitle, setTypedTitle] = useState("");
-  const [showButton, setShowButton] = useState(false);
+  const hasNavigatedRef = useRef(false);
 
   const logoScale = useSharedValue(0.55);
   const logoOpacity = useSharedValue(0);
+  const titleOpacity = useSharedValue(0);
+  const titleTranslateY = useSharedValue(16);
   const subtitleOpacity = useSharedValue(0);
-  const subtitleTranslateY = useSharedValue(14);
-  const buttonOpacity = useSharedValue(0);
-  const buttonTranslateY = useSharedValue(16);
+  const subtitleTranslateY = useSharedValue(12);
 
   const logoStyle = useAnimatedStyle(() => ({
     opacity: logoOpacity.value,
     transform: [{ scale: logoScale.value }],
+  }));
+
+  const titleStyle = useAnimatedStyle(() => ({
+    opacity: titleOpacity.value,
+    transform: [{ translateY: titleTranslateY.value }],
   }));
 
   const subtitleStyle = useAnimatedStyle(() => ({
@@ -45,10 +47,6 @@ export default function WelcomeScreen() {
     transform: [{ translateY: subtitleTranslateY.value }],
   }));
 
-  const buttonStyle = useAnimatedStyle(() => ({
-    opacity: buttonOpacity.value,
-    transform: [{ translateY: buttonTranslateY.value }],
-  }));
 
   useEffect(() => {
     logoOpacity.value = withTiming(1, { duration: 700, easing: Easing.out(Easing.cubic) });
@@ -56,52 +54,51 @@ export default function WelcomeScreen() {
   }, [logoOpacity, logoScale]);
 
   useEffect(() => {
-    let index = 0;
-    let typeTimer: ReturnType<typeof setInterval> | null = null;
+    const titleDelay = setTimeout(() => {
+      titleOpacity.value = withTiming(1, {
+        duration: 520,
+        easing: Easing.out(Easing.quad),
+      });
+      titleTranslateY.value = withTiming(0, {
+        duration: 520,
+        easing: Easing.out(Easing.quad),
+      });
+    }, 520);
 
-    const startDelay = setTimeout(() => {
-      typeTimer = setInterval(() => {
-        index += 1;
-        setTypedTitle(TITLE.slice(0, index));
-        if (index >= TITLE.length) {
-          if (typeTimer) {
-            clearInterval(typeTimer);
-          }
-
-          subtitleOpacity.value = withTiming(1, {
-            duration: 500,
-            easing: Easing.out(Easing.quad),
-          });
-          subtitleTranslateY.value = withTiming(0, {
-            duration: 500,
-            easing: Easing.out(Easing.quad),
-          });
-
-          buttonOpacity.value = withDelay(
-            350,
-            withTiming(1, { duration: 450, easing: Easing.out(Easing.quad) }),
-          );
-          buttonTranslateY.value = withDelay(
-            350,
-            withTiming(0, { duration: 450, easing: Easing.out(Easing.quad) }),
-          );
-
-          setTimeout(() => setShowButton(true), 350);
-        }
-      }, 45);
-    }, 650);
+    const subtitleDelay = setTimeout(() => {
+      subtitleOpacity.value = withTiming(1, {
+        duration: 520,
+        easing: Easing.out(Easing.quad),
+      });
+      subtitleTranslateY.value = withTiming(0, {
+        duration: 520,
+        easing: Easing.out(Easing.quad),
+      });
+    }, 920);
 
     return () => {
-      clearTimeout(startDelay);
-      if (typeTimer) {
-        clearInterval(typeTimer);
-      }
+      clearTimeout(titleDelay);
+      clearTimeout(subtitleDelay);
     };
-  }, [buttonOpacity, buttonTranslateY, subtitleOpacity, subtitleTranslateY]);
+  }, [subtitleOpacity, subtitleTranslateY, titleOpacity, titleTranslateY]);
 
   const handleContinue = useCallback(() => {
+    if (hasNavigatedRef.current) {
+      return;
+    }
+    hasNavigatedRef.current = true;
     router.replace("/(tabs)" as Href);
   }, [router]);
+
+  useEffect(() => {
+    const autoContinueTimer = setTimeout(() => {
+      handleContinue();
+    }, 2600);
+
+    return () => {
+      clearTimeout(autoContinueTimer);
+    };
+  }, [handleContinue]);
 
   if (!isLoaded) {
     return null;
@@ -119,21 +116,15 @@ export default function WelcomeScreen() {
         </Animated.View>
 
         <View style={styles.textBlock}>
-          <Text style={styles.title} numberOfLines={3}>
-            {typedTitle}
-          </Text>
+          <Animated.View style={titleStyle}>
+            <Text style={styles.title} numberOfLines={3}>
+              {TITLE}
+            </Text>
+          </Animated.View>
           <Animated.View style={[styles.subtitleWrap, subtitleStyle]}>
             <Text style={styles.subtitle}>{SUBTITLE}</Text>
           </Animated.View>
         </View>
-
-        <Animated.View style={[styles.buttonWrap, buttonStyle]}>
-          <AuthPrimaryButton
-            label="Let's Goo!"
-            onPress={handleContinue}
-            disabled={!showButton}
-          />
-        </Animated.View>
       </View>
     </SafeAreaView>
   );
@@ -194,9 +185,5 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 28,
     paddingHorizontal: 12,
-  },
-  buttonWrap: {
-    width: "100%",
-    marginTop: 8,
   },
 });

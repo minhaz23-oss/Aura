@@ -1,7 +1,9 @@
 import { Redirect, type Href } from "expo-router";
 import { useAuth } from "@clerk/clerk-expo";
 import { useEffect, useState } from "react";
+import { StyleSheet, View } from "react-native";
 
+import { onboardingTheme } from "@/constants/onboarding-theme";
 import { isMainOnboardingComplete } from "@/lib/user-onboarding";
 
 export default function Index() {
@@ -37,12 +39,19 @@ export default function Index() {
   }, [isSignedIn, userId]);
 
   if (!isLoaded || isCheckingOnboarding) {
-    return null;
+    return <View style={styles.loadingScreen} />;
   }
 
   if (!isSignedIn) {
     return <Redirect href={"/onboarding" as Href} />;
   }
 
-  return <Redirect href={(isOnboardingComplete ? "/(tabs)" : "/(main-onboarding)") as Href} />;
+  return <Redirect href={(isOnboardingComplete ? "/welcome" : "/(main-onboarding)") as Href} />;
 }
+
+const styles = StyleSheet.create({
+  loadingScreen: {
+    flex: 1,
+    backgroundColor: onboardingTheme.background,
+  },
+});
