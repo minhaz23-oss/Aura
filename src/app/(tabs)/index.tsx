@@ -28,49 +28,55 @@ export default function HunterHomeScreen() {
     };
   }, [user?.id]);
 
-  const attributeValues = useMemo(() => {
-    const days = Number(profile?.workoutDaysPerWeek ?? 3) || 3;
-    const duration = Number(profile?.workoutDurationMinutes ?? 30) || 30;
-    const sleep = Number(profile?.sleepHours ?? 7) || 7;
+  const assessment = profile?.assessment;
 
-    return {
-      str: Math.min(20, Math.max(6, Math.round(days * 2 + duration / 20))),
-      agi: Math.min(20, Math.max(6, Math.round(sleep + 4))),
-      end: Math.min(20, Math.max(6, Math.round(days + sleep))),
-      vit: Math.min(20, Math.max(6, Math.round((duration / 15 + sleep) * 0.8))),
-    };
-  }, [profile?.sleepHours, profile?.workoutDaysPerWeek, profile?.workoutDurationMinutes]);
+  const rank = assessment?.rank ?? "E";
+
+  const attributeValues = useMemo(
+    () => ({
+      str: assessment?.strength ?? 0,
+      agi: assessment?.agility ?? 0,
+      end: assessment?.endurance ?? 0,
+      vit: assessment?.vitality ?? 0,
+    }),
+    [assessment?.agility, assessment?.endurance, assessment?.strength, assessment?.vitality],
+  );
+
+  const totalExperience = useMemo(
+    () =>
+      attributeValues.str +
+      attributeValues.agi +
+      attributeValues.end +
+      attributeValues.vit,
+    [attributeValues],
+  );
+
+  const experienceBarWidth = `${Math.min(100, totalExperience)}%`;
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <SafeAreaView style={styles.safe} edges={["top"]}>
       <View style={styles.container}>
-        <View style={styles.topBar}>
-          <View style={styles.topIconWrap}>
-            <Text style={styles.topIconText}>S</Text>
-          </View>
-          <Text style={styles.topTitle}>THE SYSTEM</Text>
-          <View style={styles.topIconWrap}>
-            <Text style={styles.topIconText}>◈</Text>
-          </View>
-        </View>
-
         <View style={styles.playerCard}>
           <View style={styles.playerHeader}>
             <View style={styles.rankBadge}>
-              <Text style={styles.rankBadgeText}>E</Text>
+              <Text style={styles.rankBadgeText}>{rank}</Text>
             </View>
             <View>
-              <Text style={styles.playerLabel}>PLAYER</Text>
+              <Text style={styles.playerLabel}>
+                {profile?.username?.trim() || "PLAYER"}
+              </Text>
               <Text style={styles.playerLevel}>LEVEL 1</Text>
             </View>
           </View>
 
           <View style={styles.expRow}>
             <Text style={styles.expLabel}>EXPERIENCE</Text>
-            <Text style={styles.expValue}>120 / 1000</Text>
+            <Text style={styles.expValue}>
+              {totalExperience} / <Text style={styles.infinity}>∞</Text>
+            </Text>
           </View>
           <View style={styles.expTrack}>
-            <View style={styles.expFill} />
+            <View style={[styles.expFill, { width: experienceBarWidth }]} />
           </View>
 
           <View style={styles.attrGrid}>
@@ -117,14 +123,6 @@ export default function HunterHomeScreen() {
             <Text style={styles.acceptButtonText}>ACCEPT QUEST</Text>
           </Pressable>
         </View>
-
-        <View style={styles.bottomBar}>
-          <Text style={[styles.bottomNavText, styles.bottomNavActive]}>HOME</Text>
-          <Text style={styles.bottomNavText}>QUESTS</Text>
-          <Text style={styles.bottomNavText}>STATS</Text>
-          <Text style={styles.bottomNavText}>LOGS</Text>
-          <Text style={styles.bottomNavText}>PROFILE</Text>
-        </View>
       </View>
     </SafeAreaView>
   );
@@ -138,40 +136,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     paddingHorizontal: 14,
-    paddingTop: 6,
+    paddingTop: 10,
     paddingBottom: 10,
     gap: 14,
     backgroundColor: onboardingTheme.background,
-  },
-  topBar: {
-    borderWidth: 1,
-    borderColor: onboardingTheme.line,
-    backgroundColor: onboardingTheme.surface,
-    minHeight: 58,
-    paddingHorizontal: 14,
-    alignItems: "center",
-    justifyContent: "space-between",
-    flexDirection: "row",
-  },
-  topIconWrap: {
-    width: 24,
-    height: 24,
-    borderWidth: 1,
-    borderColor: onboardingTheme.line,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  topIconText: {
-    fontFamily: appFonts.semiBold,
-    color: onboardingTheme.accentMuted,
-    fontSize: 11,
-  },
-  topTitle: {
-    fontFamily: appFonts.extraBold,
-    color: onboardingTheme.accent,
-    letterSpacing: 2.6,
-    fontSize: 28,
   },
   playerCard: {
     borderWidth: 1,
@@ -228,6 +196,10 @@ const styles = StyleSheet.create({
     color: onboardingTheme.accent,
     fontSize: 10,
   },
+  infinity: {
+    fontFamily: appFonts.bold,
+    fontSize: 14,
+  },
   expTrack: {
     height: 5,
     backgroundColor: "#1e1e1e",
@@ -236,7 +208,6 @@ const styles = StyleSheet.create({
   },
   expFill: {
     height: "100%",
-    width: "12%",
     backgroundColor: onboardingTheme.accent,
   },
   attrGrid: {
@@ -328,24 +299,5 @@ const styles = StyleSheet.create({
     color: "#000000",
     fontSize: 12,
     letterSpacing: 1.8,
-  },
-  bottomBar: {
-    marginTop: "auto",
-    borderWidth: 1,
-    borderColor: onboardingTheme.line,
-    backgroundColor: onboardingTheme.surface,
-    minHeight: 56,
-    flexDirection: "row",
-    justifyContent: "space-around",
-    alignItems: "center",
-  },
-  bottomNavText: {
-    fontFamily: appFonts.semiBold,
-    color: "#5a5a5a",
-    fontSize: 10,
-    letterSpacing: 1.1,
-  },
-  bottomNavActive: {
-    color: onboardingTheme.accent,
   },
 });

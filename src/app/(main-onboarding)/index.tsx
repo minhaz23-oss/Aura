@@ -1,12 +1,14 @@
 import { useUser } from "@clerk/clerk-expo";
 import { type Href, useRouter } from "expo-router";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from "react-native";
 import Animated, {
@@ -19,10 +21,23 @@ import Animated, {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { AuthPrimaryButton } from "@/components/auth/AuthPrimaryButton";
-import { AuthTextField } from "@/components/auth/AuthTextField";
-import { GlowingText } from "@/components/onboarding/GlowingText";
+import { OnboardingChrome, SystemNotice } from "@/components/main-onboarding/OnboardingChrome";
+import {
+  SelectionCard,
+  type SelectionIconName,
+} from "@/components/main-onboarding/SelectionCard";
+import { UnitToggle } from "@/components/main-onboarding/UnitToggle";
+import { WheelPicker } from "@/components/main-onboarding/WheelPicker";
 import { appFonts } from "@/constants/fonts";
 import { onboardingTheme } from "@/constants/onboarding-theme";
+import {
+  ageFromBirthDate,
+  cmFromFeetInches,
+  daysInMonth,
+  kgFromLbs,
+  type HeightUnit,
+  type WeightUnit,
+} from "@/lib/onboarding-units";
 import {
   EMPTY_ONBOARDING_PROFILE,
   saveMainOnboardingProfile,
@@ -31,159 +46,408 @@ import {
 
 type FieldKey = keyof UserOnboardingProfile;
 
-type BaseFieldConfig = {
-  key: FieldKey;
-  label: string;
+type SelectOption = {
+  value: string;
+  title: string;
   subtitle: string;
+  icon: SelectionIconName;
+};
+
+type StepConfig = {
+  id: string;
+  phase: 1 | 2 | 3 | 4;
+  kind: "height" | "weight" | "birthDate" | "text" | "select";
+  key?: FieldKey;
+  title: string;
+  subtitle: string;
+  noticeTitle: string;
+  noticeMessage: string;
   required?: boolean;
-};
-
-type TextFieldConfig = BaseFieldConfig & {
-  kind: "text";
-  placeholder: string;
+  placeholder?: string;
   keyboardType?: "default" | "number-pad" | "decimal-pad";
+  options?: SelectOption[];
+  useWeightUnit?: boolean;
 };
 
-type SelectFieldConfig = BaseFieldConfig & {
-  kind: "select";
-  options: string[];
-};
+const TOTAL_PHASES = 4;
 
-type FieldConfig = TextFieldConfig | SelectFieldConfig;
-
-const MOTIVATIONAL_QUOTES = [
-  "Small steps done daily forge unbeatable hunters.",
-  "Discipline beats motivation when the day gets hard.",
-  "Progress is built in quiet reps no one sees.",
-  "Your future rank is hidden inside today's effort.",
-  "Consistency is the real awakening power.",
-  "The strongest version of you starts now.",
-  "A focused mind creates a stronger body.",
-];
-
-const ONBOARDING_FIELDS: FieldConfig[] = [
+const ONBOARDING_STEPS: StepConfig[] = [
   {
-    key: "heightCm",
-    label: "HEIGHT_CM",
-    subtitle: "Tell us your current height.",
-    required: true,
+    id: "username",
+    phase: 1,
     kind: "text",
-    placeholder: "175",
-    keyboardType: "number-pad",
+    key: "username",
+    title: "Choose your hunter username.",
+    subtitle: "This is how the system will identify you.",
+    noticeTitle: "SYSTEM ASSESSMENT INITIATED",
+    noticeMessage: "Hunter, register your call sign.",
+    required: true,
+    placeholder: "shadow_hunter",
+    keyboardType: "default",
   },
   {
-    key: "weightKg",
-    label: "WEIGHT_KG",
-    subtitle: "Tell us your current weight.",
+    id: "height",
+    phase: 1,
+    kind: "height",
+    title: "State your height, Hunter.",
+    subtitle: "The system needs your baseline measurements.",
+    noticeTitle: "SYSTEM ASSESSMENT INITIATED",
+    noticeMessage: "Hunter, provide your physical baseline.",
     required: true,
-    kind: "text",
-    placeholder: "70",
-    keyboardType: "number-pad",
   },
   {
+    id: "weight",
+    phase: 1,
+    kind: "weight",
+    title: "State your weight, Hunter.",
+    subtitle: "Choose your preferred unit and enter current weight.",
+    noticeTitle: "BODY METRICS",
+    noticeMessage: "Record your current mass for calibration.",
+    required: true,
+  },
+  {
+    id: "birthDate",
+    phase: 1,
+    kind: "birthDate",
+    title: "When were you born, Hunter?",
+    subtitle: "Your birth date helps personalize training intensity.",
+    noticeTitle: "IDENTITY SYNC",
+    noticeMessage: "Select year, month, and day.",
+    required: true,
+  },
+  {
+    id: "sleep",
+    phase: 2,
+    kind: "text",
     key: "sleepHours",
-    label: "SLEEP_HOURS",
-    subtitle: "How many hours do you sleep daily?",
+    title: "How many hours do you sleep?",
+    subtitle: "Recovery is part of the awakening protocol.",
+    noticeTitle: "RECOVERY PROTOCOL",
+    noticeMessage: "Average nightly sleep duration.",
     required: true,
-    kind: "text",
     placeholder: "7.5",
     keyboardType: "decimal-pad",
   },
   {
-    key: "age",
-    label: "AGE",
-    subtitle: "Your age helps personalize your plan.",
-    kind: "text",
-    placeholder: "26",
-    keyboardType: "number-pad",
-  },
-  {
+    id: "gender",
+    phase: 2,
+    kind: "select",
     key: "gender",
-    label: "GENDER",
-    subtitle: "Select the option you identify with.",
-    kind: "select",
-    options: ["Male", "Female", "Other", "Prefer not to say"],
+    title: "Select your gender.",
+    subtitle: "Used only for plan personalization.",
+    noticeTitle: "PROFILE DATA",
+    noticeMessage: "Choose one option below.",
+    options: [
+      { value: "Male", title: "Male", subtitle: "Default hunter class", icon: "gender-male" },
+      { value: "Female", title: "Female", subtitle: "Default hunter class", icon: "gender-female" },
+      {
+        value: "Other",
+        title: "Other",
+        subtitle: "Custom profile path",
+        icon: "gender-non-binary",
+      },
+      {
+        value: "Prefer not to say",
+        title: "Prefer not to say",
+        subtitle: "Skip classification",
+        icon: "eye-off-outline",
+      },
+    ],
   },
   {
+    id: "activity",
+    phase: 2,
+    kind: "select",
     key: "activityLevel",
-    label: "ACTIVITY_LEVEL",
-    subtitle: "How active are you currently?",
-    kind: "select",
-    options: ["Beginner", "Moderate", "Advanced"],
+    title: "How active are you currently?",
+    subtitle: "Your current activity sets quest difficulty.",
+    noticeTitle: "ACTIVITY SCAN",
+    noticeMessage: "Select your current training level.",
+    options: [
+      { value: "Beginner", title: "Beginner", subtitle: "Low activity baseline", icon: "walk" },
+      { value: "Moderate", title: "Moderate", subtitle: "Balanced output", icon: "run" },
+      {
+        value: "Advanced",
+        title: "Advanced",
+        subtitle: "High output hunter",
+        icon: "lightning-bolt",
+      },
+    ],
   },
   {
+    id: "goal",
+    phase: 3,
+    kind: "select",
     key: "primaryGoal",
-    label: "PRIMARY_GOAL",
-    subtitle: "What is your main target right now?",
+    title: "What is your primary goal, Hunter?",
+    subtitle: "Choose the objective that drives your journey.",
+    noticeTitle: "OBJECTIVE LOCK",
+    noticeMessage: "Hunter, state your objective.",
     required: true,
-    kind: "select",
-    options: ["Fat loss", "Muscle gain", "Endurance", "General fitness", "Habit building"],
+    options: [
+      {
+        value: "Muscle gain",
+        title: "Build Muscle",
+        subtitle: "Increase STR & VIT",
+        icon: "dumbbell",
+      },
+      {
+        value: "Fat loss",
+        title: "Lose Fat",
+        subtitle: "Optimize AGI & DEX",
+        icon: "fire",
+      },
+      {
+        value: "Endurance",
+        title: "Boost Endurance",
+        subtitle: "Raise END & VIT",
+        icon: "run-fast",
+      },
+      {
+        value: "General fitness",
+        title: "General Fitness",
+        subtitle: "Balanced stat growth",
+        icon: "heart-pulse",
+      },
+      {
+        value: "Habit building",
+        title: "Build Habits",
+        subtitle: "Consistency protocol",
+        icon: "checkbox-marked-circle-outline",
+      },
+    ],
   },
   {
+    id: "targetWeight",
+    phase: 3,
+    kind: "weight",
     key: "targetWeightKg",
-    label: "TARGET_WEIGHT_KG",
-    subtitle: "Optional target body weight.",
-    kind: "text",
-    placeholder: "65",
-    keyboardType: "number-pad",
+    title: "Target weight (optional).",
+    subtitle: "Set a target mass if you have one.",
+    noticeTitle: "TARGET CALIBRATION",
+    noticeMessage: "Optional future body weight.",
+    useWeightUnit: true,
   },
   {
+    id: "days",
+    phase: 3,
+    kind: "select",
     key: "workoutDaysPerWeek",
-    label: "WORKOUT_DAYS_PER_WEEK",
-    subtitle: "How many training days per week?",
-    kind: "select",
-    options: ["2", "3", "4", "5", "6+"],
+    title: "Training days per week?",
+    subtitle: "How often will you enter the dungeon?",
+    noticeTitle: "SCHEDULE",
+    noticeMessage: "Weekly training frequency.",
+    options: ["2", "3", "4", "5", "6+"].map((v) => ({
+      value: v,
+      title: `${v} days`,
+      subtitle: "Weekly quest load",
+      icon: "calendar" as SelectionIconName,
+    })),
   },
   {
+    id: "duration",
+    phase: 3,
+    kind: "select",
     key: "workoutDurationMinutes",
-    label: "WORKOUT_DURATION_MINUTES",
-    subtitle: "Preferred session duration.",
-    kind: "select",
-    options: ["20", "30", "45", "60", "90"],
+    title: "Session duration?",
+    subtitle: "Preferred minutes per training session.",
+    noticeTitle: "SESSION LENGTH",
+    noticeMessage: "Pick your average workout time.",
+    options: ["20", "30", "45", "60", "90"].map((v) => ({
+      value: v,
+      title: `${v} min`,
+      subtitle: "Per session target",
+      icon: "timer-outline" as SelectionIconName,
+    })),
   },
   {
+    id: "diet",
+    phase: 4,
+    kind: "select",
     key: "dietPreference",
-    label: "DIET_PREFERENCE",
-    subtitle: "Choose your nutrition style.",
-    kind: "select",
-    options: ["Balanced", "High protein", "Low carb", "Vegetarian", "No preference"],
+    title: "Nutrition preference?",
+    subtitle: "Fuel protocol for your hunter build.",
+    noticeTitle: "FUEL PROTOCOL",
+    noticeMessage: "Choose your diet style.",
+    options: [
+      {
+        value: "Balanced",
+        title: "Balanced",
+        subtitle: "Standard macro split",
+        icon: "scale-balance",
+      },
+      {
+        value: "High protein",
+        title: "High Protein",
+        subtitle: "STR recovery focus",
+        icon: "food-steak",
+      },
+      { value: "Low carb", title: "Low Carb", subtitle: "Fat burn priority", icon: "leaf" },
+      { value: "Vegetarian", title: "Vegetarian", subtitle: "Plant-based path", icon: "sprout" },
+      {
+        value: "No preference",
+        title: "No Preference",
+        subtitle: "Flexible intake",
+        icon: "circle-outline",
+      },
+    ],
   },
   {
-    key: "injuriesOrLimitations",
-    label: "INJURIES_OR_LIMITATIONS",
-    subtitle: "Any limitations we should account for?",
+    id: "injuries",
+    phase: 4,
     kind: "text",
+    key: "injuriesOrLimitations",
+    title: "Any injuries or limitations?",
+    subtitle: "Optional — helps avoid penalty zones.",
+    noticeTitle: "RISK CHECK",
+    noticeMessage: "List limitations or type none.",
     placeholder: "Knee pain, shoulder issue, none...",
   },
   {
-    key: "medicalConditions",
-    label: "MEDICAL_CONDITIONS",
-    subtitle: "Any medical context to consider?",
+    id: "medical",
+    phase: 4,
     kind: "text",
+    key: "medicalConditions",
+    title: "Any medical conditions?",
+    subtitle: "Optional context for safer programming.",
+    noticeTitle: "MEDICAL CONTEXT",
+    noticeMessage: "List conditions or type none.",
     placeholder: "Asthma, diabetes, none...",
   },
   {
+    id: "workoutType",
+    phase: 4,
+    kind: "select",
     key: "preferredWorkoutType",
-    label: "PREFERRED_WORKOUT_TYPE",
-    subtitle: "Your favorite training style.",
-    kind: "select",
-    options: ["Gym", "Home", "Bodyweight", "Running", "Mixed"],
+    title: "Preferred workout style?",
+    subtitle: "Your favorite training environment.",
+    noticeTitle: "TRAINING MODE",
+    noticeMessage: "Select your preferred style.",
+    options: [
+      { value: "Gym", title: "Gym", subtitle: "Full equipment access", icon: "dumbbell" },
+      { value: "Home", title: "Home", subtitle: "Indoor protocol", icon: "home-outline" },
+      {
+        value: "Bodyweight",
+        title: "Bodyweight",
+        subtitle: "No gear required",
+        icon: "human-handsup",
+      },
+      { value: "Running", title: "Running", subtitle: "Cardio focused", icon: "run" },
+      { value: "Mixed", title: "Mixed", subtitle: "Hybrid training", icon: "flash" },
+    ],
   },
   {
+    id: "equipment",
+    phase: 4,
+    kind: "select",
     key: "equipmentAccess",
-    label: "EQUIPMENT_ACCESS",
-    subtitle: "What equipment do you have?",
-    kind: "select",
-    options: ["Full gym", "Basic dumbbells", "Bodyweight only", "Mixed access"],
+    title: "Equipment access?",
+    subtitle: "What tools do you have available?",
+    noticeTitle: "LOADOUT",
+    noticeMessage: "Select available equipment.",
+    options: [
+      { value: "Full gym", title: "Full Gym", subtitle: "Complete arsenal", icon: "warehouse" },
+      {
+        value: "Basic dumbbells",
+        title: "Basic Dumbbells",
+        subtitle: "Limited loadout",
+        icon: "dumbbell",
+      },
+      {
+        value: "Bodyweight only",
+        title: "Bodyweight Only",
+        subtitle: "Minimal gear",
+        icon: "account-outline",
+      },
+      {
+        value: "Mixed access",
+        title: "Mixed Access",
+        subtitle: "Variable setup",
+        icon: "shape-outline",
+      },
+    ],
   },
   {
-    key: "notes",
-    label: "NOTES",
-    subtitle: "Any extra context for personalization?",
+    id: "notes",
+    phase: 4,
     kind: "text",
+    key: "notes",
+    title: "Anything else we should know?",
+    subtitle: "Optional notes for deeper personalization.",
+    noticeTitle: "FINAL INPUT",
+    noticeMessage: "Add any extra context.",
     placeholder: "Anything else we should know...",
   },
 ];
+
+const CURRENT_YEAR = new Date().getFullYear();
+const YEAR_OPTIONS = Array.from({ length: 80 }, (_, i) => String(CURRENT_YEAR - i));
+const MONTH_OPTIONS = Array.from({ length: 12 }, (_, i) => String(i + 1).padStart(2, "0"));
+
+function buildProfilePayload(form: UserOnboardingProfile): UserOnboardingProfile {
+  const year = Number(form.birthYear);
+  const month = Number(form.birthMonth);
+  const day = Number(form.birthDay);
+
+  let heightCm = form.heightCm;
+  if (form.heightUnit === "ft_in") {
+    heightCm = String(
+      cmFromFeetInches(Number(form.heightFt) || 0, Number(form.heightIn) || 0),
+    );
+  }
+
+  let weightKg = form.weightKg;
+  if (form.weightUnit === "lbs" && form.weightLbs.trim()) {
+    weightKg = String(kgFromLbs(Number(form.weightLbs) || 0));
+  }
+
+  let targetWeightKg = form.targetWeightKg;
+  if (form.targetWeightKg.trim() && form.weightUnit === "lbs") {
+    targetWeightKg = String(kgFromLbs(Number(form.targetWeightKg) || 0));
+  }
+
+  const age =
+    year && month && day ? String(ageFromBirthDate(year, month, day)) : form.age;
+
+  return {
+    ...form,
+    username: form.username.trim(),
+    heightCm,
+    weightKg,
+    targetWeightKg,
+    age,
+  };
+}
+
+function isStepValid(step: StepConfig, form: UserOnboardingProfile) {
+  if (step.kind === "height") {
+    if (form.heightUnit === "cm") {
+      return Number(form.heightCm) > 0;
+    }
+    const ft = Number(form.heightFt) || 0;
+    const inches = Number(form.heightIn) || 0;
+    return ft > 0 || inches > 0;
+  }
+  if (step.kind === "weight") {
+    if (step.key === "targetWeightKg") {
+      return true;
+    }
+    if (form.weightUnit === "kg") {
+      return Number(form.weightKg) > 0;
+    }
+    return Number(form.weightLbs) > 0;
+  }
+  if (step.kind === "birthDate") {
+    return Boolean(form.birthYear && form.birthMonth && form.birthDay);
+  }
+  if (step.key === "username") {
+    return form.username.trim().length >= 2;
+  }
+  if (step.required && step.key) {
+    return form[step.key].trim().length > 0;
+  }
+  return true;
+}
 
 export default function MainOnboardingScreen() {
   const router = useRouter();
@@ -193,83 +457,71 @@ export default function MainOnboardingScreen() {
   const [isAnimating, setIsAnimating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [quote, setQuote] = useState(() => {
-    return MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)]!;
-  });
 
-  const currentField = ONBOARDING_FIELDS[stepIndex]!;
-  const isLastStep = stepIndex === ONBOARDING_FIELDS.length - 1;
-  const progressLabel = `${stepIndex + 1}/${ONBOARDING_FIELDS.length}`;
+  const currentStep = ONBOARDING_STEPS[stepIndex]!;
+  const isLastStep = stepIndex === ONBOARDING_STEPS.length - 1;
 
-  const canProceedCurrentStep = useMemo(() => {
+  const dayOptions = useMemo(() => {
+    const year = Number(form.birthYear) || CURRENT_YEAR;
+    const month = Number(form.birthMonth) || 1;
+    const maxDays = daysInMonth(year, month);
+    return Array.from({ length: maxDays }, (_, i) => String(i + 1).padStart(2, "0"));
+  }, [form.birthYear, form.birthMonth]);
+
+  useEffect(() => {
+    if (currentStep.kind !== "birthDate") {
+      return;
+    }
+    if (!form.birthYear || !form.birthMonth || !form.birthDay) {
+      setForm((prev) => ({
+        ...prev,
+        birthYear: prev.birthYear || YEAR_OPTIONS[25]!,
+        birthMonth: prev.birthMonth || "01",
+        birthDay: prev.birthDay || "01",
+      }));
+    }
+  }, [currentStep.kind, form.birthDay, form.birthMonth, form.birthYear]);
+
+  useEffect(() => {
+    if (!form.birthDay) {
+      return;
+    }
+    const max = dayOptions.length;
+    if (Number(form.birthDay) > max) {
+      setForm((prev) => ({ ...prev, birthDay: String(max).padStart(2, "0") }));
+    }
+  }, [dayOptions.length, form.birthDay]);
+
+  const canProceed = useMemo(() => {
     if (isSubmitting || isAnimating) {
       return false;
     }
-    if (!currentField.required) {
-      return true;
-    }
-    return form[currentField.key].trim().length > 0;
-  }, [currentField, form, isAnimating, isSubmitting]);
+    return isStepValid(currentStep, form);
+  }, [currentStep, form, isAnimating, isSubmitting]);
 
   const cardTranslateX = useSharedValue(0);
-  const cardScale = useSharedValue(1);
-  const cardRotate = useSharedValue(0);
+  const cardOpacity = useSharedValue(1);
 
-  const cardSwapStyle = useAnimatedStyle(() => ({
-    transform: [
-      { translateX: cardTranslateX.value },
-      { scale: cardScale.value },
-      { rotateZ: `${cardRotate.value}deg` },
-    ],
+  const cardStyle = useAnimatedStyle(() => ({
+    opacity: cardOpacity.value,
+    transform: [{ translateX: cardTranslateX.value }],
   }));
 
-  const updateField = useCallback(
-    (key: keyof UserOnboardingProfile, value: string) => {
-      setForm((prev) => ({ ...prev, [key]: value }));
-    },
-    [],
-  );
-
-  const showRandomQuote = useCallback(() => {
-    setQuote((prev) => {
-      if (MOTIVATIONAL_QUOTES.length < 2) {
-        return prev;
-      }
-      let next = prev;
-      while (next === prev) {
-        next = MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)]!;
-      }
-      return next;
-    });
+  const updateField = useCallback((key: FieldKey, value: string) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
   }, []);
 
   const completeTransition = useCallback(
     (targetIndex: number, direction: 1 | -1) => {
       setStepIndex(targetIndex);
-      showRandomQuote();
-
-      cardTranslateX.value = direction * 24;
-      cardScale.value = 0.985;
-      cardRotate.value = direction * 0.8;
-
-      cardTranslateX.value = withTiming(0, {
-        duration: 420,
-        easing: Easing.bezier(0.22, 1, 0.36, 1),
-      }, (finished) => {
-        if (finished) {
-          runOnJS(setIsAnimating)(false);
-        }
-      });
-      cardScale.value = withTiming(1, {
-        duration: 420,
-        easing: Easing.bezier(0.22, 1, 0.36, 1),
-      });
-      cardRotate.value = withTiming(0, {
-        duration: 420,
-        easing: Easing.bezier(0.22, 1, 0.36, 1),
+      cardTranslateX.value = direction * 28;
+      cardOpacity.value = 0.92;
+      cardTranslateX.value = withTiming(0, { duration: 360, easing: Easing.out(Easing.cubic) });
+      cardOpacity.value = withTiming(1, { duration: 360, easing: Easing.out(Easing.cubic) }, () => {
+        runOnJS(setIsAnimating)(false);
       });
     },
-    [cardRotate, cardScale, cardTranslateX, showRandomQuote],
+    [cardOpacity, cardTranslateX],
   );
 
   const animateStepChange = useCallback(
@@ -277,39 +529,23 @@ export default function MainOnboardingScreen() {
       if (isAnimating) {
         return;
       }
-
       setIsAnimating(true);
-      cardScale.value = withTiming(0.985, {
-        duration: 220,
-        easing: Easing.inOut(Easing.quad),
+      cardOpacity.value = withTiming(0.55, { duration: 180 }, (finished) => {
+        if (finished) {
+          runOnJS(completeTransition)(targetIndex, direction);
+        }
       });
-      cardRotate.value = withTiming(-direction * 0.8, {
-        duration: 220,
-        easing: Easing.inOut(Easing.quad),
-      });
-      cardTranslateX.value = withTiming(
-        -direction * 22,
-        {
-          duration: 220,
-          easing: Easing.inOut(Easing.quad),
-        },
-        (finished) => {
-          if (finished) {
-            runOnJS(completeTransition)(targetIndex, direction);
-          }
-        },
-      );
     },
-    [cardRotate, cardScale, cardTranslateX, completeTransition, isAnimating],
+    [cardOpacity, completeTransition, isAnimating],
   );
 
   const handleNext = useCallback(() => {
-    if (!canProceedCurrentStep || isLastStep || isAnimating) {
+    if (!canProceed || isLastStep || isAnimating) {
       return;
     }
     setErrorMessage(null);
     animateStepChange(stepIndex + 1, 1);
-  }, [animateStepChange, canProceedCurrentStep, isAnimating, isLastStep, stepIndex]);
+  }, [animateStepChange, canProceed, isAnimating, isLastStep, stepIndex]);
 
   const handleBack = useCallback(() => {
     if (stepIndex === 0 || isAnimating) {
@@ -320,21 +556,186 @@ export default function MainOnboardingScreen() {
   }, [animateStepChange, isAnimating, stepIndex]);
 
   const handleComplete = useCallback(async () => {
-    if (!user?.id || !canProceedCurrentStep) {
+    if (!user?.id || !canProceed) {
       return;
     }
-
     setErrorMessage(null);
     setIsSubmitting(true);
     try {
-      await saveMainOnboardingProfile(user.id, form);
+      const payload = buildProfilePayload(form);
+      await saveMainOnboardingProfile(user.id, payload);
       router.replace("/assessment" as Href);
     } catch {
       setErrorMessage("Unable to save onboarding data. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
-  }, [canProceedCurrentStep, form, router, user?.id]);
+  }, [canProceed, form, router, user?.id]);
+
+  const renderHeightStep = () => (
+    <View style={styles.inputBlock}>
+      <UnitToggle<HeightUnit>
+        left="cm"
+        right="ft_in"
+        leftLabel="CM"
+        rightLabel="FT / IN"
+        value={(form.heightUnit as HeightUnit) || "cm"}
+        onChange={(unit) => updateField("heightUnit", unit)}
+      />
+      {form.heightUnit === "ft_in" ? (
+        <View style={styles.splitRow}>
+          <View style={styles.splitField}>
+            <Text style={styles.fieldLabel}>FT</Text>
+            <TextInput
+              style={styles.valueInput}
+              value={form.heightFt}
+              onChangeText={(v) => updateField("heightFt", v.replace(/[^0-9]/g, ""))}
+              keyboardType="number-pad"
+              placeholder="5"
+              placeholderTextColor={onboardingTheme.accentDim}
+            />
+          </View>
+          <View style={styles.splitField}>
+            <Text style={styles.fieldLabel}>IN</Text>
+            <TextInput
+              style={styles.valueInput}
+              value={form.heightIn}
+              onChangeText={(v) => updateField("heightIn", v.replace(/[^0-9]/g, ""))}
+              keyboardType="number-pad"
+              placeholder="10"
+              placeholderTextColor={onboardingTheme.accentDim}
+            />
+          </View>
+        </View>
+      ) : (
+        <View>
+          <Text style={styles.fieldLabel}>CENTIMETERS</Text>
+          <TextInput
+            style={styles.valueInput}
+            value={form.heightCm}
+            onChangeText={(v) => updateField("heightCm", v.replace(/[^0-9]/g, ""))}
+            keyboardType="number-pad"
+            placeholder="175"
+            placeholderTextColor={onboardingTheme.accentDim}
+          />
+        </View>
+      )}
+    </View>
+  );
+
+  const renderWeightStep = (fieldKey: FieldKey = "weightKg") => (
+    <View style={styles.inputBlock}>
+      <UnitToggle<WeightUnit>
+        left="kg"
+        right="lbs"
+        leftLabel="KG"
+        rightLabel="LBS"
+        value={(form.weightUnit as WeightUnit) || "kg"}
+        onChange={(unit) => updateField("weightUnit", unit)}
+      />
+      {form.weightUnit === "lbs" ? (
+        <View>
+          <Text style={styles.fieldLabel}>POUNDS</Text>
+          <TextInput
+            style={styles.valueInput}
+            value={fieldKey === "targetWeightKg" ? form.targetWeightKg : form.weightLbs}
+            onChangeText={(v) =>
+              updateField(fieldKey === "targetWeightKg" ? "targetWeightKg" : "weightLbs", v.replace(/[^0-9.]/g, ""))
+            }
+            keyboardType="decimal-pad"
+            placeholder="154"
+            placeholderTextColor={onboardingTheme.accentDim}
+          />
+        </View>
+      ) : (
+        <View>
+          <Text style={styles.fieldLabel}>KILOGRAMS</Text>
+          <TextInput
+            style={styles.valueInput}
+            value={fieldKey === "targetWeightKg" ? form.targetWeightKg : form.weightKg}
+            onChangeText={(v) => updateField(fieldKey, v.replace(/[^0-9.]/g, ""))}
+            keyboardType="decimal-pad"
+            placeholder="70"
+            placeholderTextColor={onboardingTheme.accentDim}
+          />
+        </View>
+      )}
+    </View>
+  );
+
+  const renderBirthDateStep = () => (
+    <View style={styles.dateRow}>
+      <View style={styles.dateColumn}>
+        <Text style={styles.fieldLabel}>YEAR</Text>
+        <WheelPicker
+          items={YEAR_OPTIONS}
+          value={form.birthYear || YEAR_OPTIONS[25]!}
+          onChange={(v) => updateField("birthYear", v)}
+        />
+      </View>
+      <View style={styles.dateColumn}>
+        <Text style={styles.fieldLabel}>MONTH</Text>
+        <WheelPicker
+          items={MONTH_OPTIONS}
+          value={form.birthMonth || "01"}
+          onChange={(v) => updateField("birthMonth", v)}
+        />
+      </View>
+      <View style={styles.dateColumn}>
+        <Text style={styles.fieldLabel}>DAY</Text>
+        <WheelPicker
+          items={dayOptions}
+          value={form.birthDay || "01"}
+          onChange={(v) => updateField("birthDay", v)}
+        />
+      </View>
+    </View>
+  );
+
+  const renderStepBody = () => {
+    if (currentStep.kind === "height") {
+      return renderHeightStep();
+    }
+    if (currentStep.kind === "weight") {
+      return renderWeightStep(currentStep.key ?? "weightKg");
+    }
+    if (currentStep.kind === "birthDate") {
+      return renderBirthDateStep();
+    }
+    if (currentStep.kind === "text" && currentStep.key) {
+      const isMultiline = currentStep.id === "injuries" || currentStep.id === "notes";
+      return (
+        <TextInput
+          style={[styles.valueInput, isMultiline && styles.textArea]}
+          value={form[currentStep.key]}
+          onChangeText={(v) => updateField(currentStep.key!, v)}
+          placeholder={currentStep.placeholder}
+          placeholderTextColor={onboardingTheme.accentDim}
+          keyboardType={currentStep.keyboardType ?? "default"}
+          autoCapitalize={currentStep.id === "username" ? "none" : "sentences"}
+          autoCorrect={currentStep.id !== "username"}
+          multiline={isMultiline}
+        />
+      );
+    }
+    if (currentStep.kind === "select" && currentStep.options && currentStep.key) {
+      return (
+        <View style={styles.optionList}>
+          {currentStep.options.map((option) => (
+            <SelectionCard
+              key={option.value}
+              title={option.title}
+              subtitle={option.subtitle}
+              icon={option.icon}
+              selected={form[currentStep.key!] === option.value}
+              onPress={() => updateField(currentStep.key!, option.value)}
+            />
+          ))}
+        </View>
+      );
+    }
+    return null;
+  };
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -342,105 +743,57 @@ export default function MainOnboardingScreen() {
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
-        <View style={styles.container}>
-          <View style={styles.hero}>
-            <Text style={styles.phaseLabel}>MAIN ONBOARDING · {progressLabel}</Text>
-            <GlowingText style={styles.headline}>
-              {`${currentField.label}${currentField.required ? " *" : ""}`}
-            </GlowingText>
-            <Text style={styles.subtitle}>{currentField.subtitle}</Text>
-          </View>
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          <OnboardingChrome
+            phase={currentStep.phase}
+            totalPhases={TOTAL_PHASES}
+            canGoBack={stepIndex > 0}
+            onBack={handleBack}
+          />
 
-          <Animated.View style={[styles.formCard, cardSwapStyle]}>
-            <View style={styles.form}>
-            {currentField.kind === "text" ? (
-              <AuthTextField
-                label={currentField.label}
-                placeholder={currentField.placeholder}
-                keyboardType={currentField.keyboardType ?? "default"}
-                value={form[currentField.key]}
-                onChangeText={(v) => updateField(currentField.key, v)}
-                editable={!isSubmitting}
-              />
-            ) : (
-              <View style={styles.optionList}>
-                {currentField.options.map((option) => {
-                  const isSelected = form[currentField.key] === option;
-                  return (
-                    <Pressable
-                      key={option}
-                      onPress={() => updateField(currentField.key, option)}
-                      style={[styles.optionButton, isSelected && styles.optionButtonSelected]}
-                    >
-                      <Text
-                        style={[
-                          styles.optionText,
-                          isSelected && styles.optionTextSelected,
-                        ]}
-                      >
-                        {option}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            )}
+          <SystemNotice
+            title={currentStep.noticeTitle}
+            message={currentStep.noticeMessage}
+          />
 
-            {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+          <Text style={styles.title}>{currentStep.title}</Text>
 
-            <View style={styles.actions}>
-              <View style={styles.nextWrap}>
-                <AuthPrimaryButton
-                  label={
-                    isLastStep
-                      ? isSubmitting
-                        ? "SAVING PROFILE..."
-                        : "Complete Onboarding →"
-                      : "Next →"
-                  }
-                  onPress={isLastStep ? handleComplete : handleNext}
-                  disabled={!canProceedCurrentStep}
-                />
-              </View>
-
-              <Pressable
-                onPress={handleBack}
-                disabled={stepIndex === 0 || isSubmitting || isAnimating}
-                style={[
-                  styles.backButton,
-                  (stepIndex === 0 || isSubmitting || isAnimating) &&
-                    styles.backButtonDisabled,
-                ]}
-              >
-                <Text style={styles.backText}>Back</Text>
-              </Pressable>
-            </View>
-            </View>
+          <Animated.View style={cardStyle}>
+            {renderStepBody()}
           </Animated.View>
 
-          <View style={styles.footer}>
-            <Text style={styles.quoteText}>"{quote}"</Text>
-            <Pressable
-              onPress={() => router.replace("/(tabs)" as Href)}
-              disabled={isSubmitting || isAnimating}
-              style={styles.skipWrap}
-            >
-              <Text style={styles.skipText}>Skip for now</Text>
-            </Pressable>
+          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+
+          <View style={styles.actions}>
+            <AuthPrimaryButton
+              label={
+                isLastStep
+                  ? isSubmitting
+                    ? "SAVING PROFILE..."
+                    : "Complete Assessment →"
+                  : "Continue →"
+              }
+              onPress={isLastStep ? handleComplete : handleNext}
+              disabled={!canProceed}
+            />
           </View>
-        </View>
+
+          <Pressable
+            onPress={() => router.replace("/assessment" as Href)}
+            disabled={isSubmitting || isAnimating}
+            style={styles.skipWrap}
+          >
+            <Text style={styles.skipText}>Skip for now</Text>
+          </Pressable>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
-
-const mono = {
-  fontFamily: appFonts.semiBold,
-};
-
-const body = {
-  fontFamily: appFonts.regular,
-};
 
 const styles = StyleSheet.create({
   safe: {
@@ -450,116 +803,90 @@ const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
-  container: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 14,
+  scrollContent: {
+    flexGrow: 1,
+    paddingHorizontal: 20,
+    paddingTop: 8,
     paddingBottom: 28,
-    justifyContent: "center",
-    gap: 18,
   },
-  hero: {
-    gap: 10,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  phaseLabel: {
-    ...mono,
-    color: onboardingTheme.accentMuted,
-    fontSize: 11,
-    letterSpacing: 1.4,
-  },
-  headline: {
-    fontSize: 33,
-  },
-  subtitle: {
-    ...body,
-    color: onboardingTheme.accentMuted,
-    fontSize: 24,
-    lineHeight: 30,
+  title: {
+    fontFamily: appFonts.extraBold,
+    color: onboardingTheme.accent,
+    fontSize: 28,
+    lineHeight: 34,
     textAlign: "center",
-    maxWidth: 340,
+    marginBottom: 22,
+    letterSpacing: 0.3,
   },
-  form: {
-    gap: 14,
+  inputBlock: {
+    gap: 4,
   },
-  formCard: {
-    marginTop: 40,
+  fieldLabel: {
+    fontFamily: appFonts.semiBold,
+    color: onboardingTheme.accentMuted,
+    fontSize: 10,
+    letterSpacing: 1.4,
+    marginBottom: 6,
+  },
+  valueInput: {
     borderWidth: 1,
     borderColor: onboardingTheme.line,
-    borderRadius: onboardingTheme.radius,
-    backgroundColor: onboardingTheme.surface,
-    padding: 14,
-  },
-  errorText: {
-    ...mono,
+    backgroundColor: "#0d0d0d",
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    fontFamily: appFonts.bold,
     color: onboardingTheme.accent,
-    fontSize: 11,
+    fontSize: 22,
+    textAlign: "center",
+  },
+  textArea: {
+    minHeight: 96,
+    textAlign: "left",
+    fontSize: 15,
+    fontFamily: appFonts.regular,
+  },
+  splitRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  splitField: {
+    flex: 1,
+  },
+  dateRow: {
+    flexDirection: "row",
+    gap: 8,
+    borderWidth: 1,
+    borderColor: onboardingTheme.line,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 6,
+    backgroundColor: "#0d0d0d",
+  },
+  dateColumn: {
+    flex: 1,
+    alignItems: "center",
+    gap: 4,
   },
   optionList: {
     gap: 10,
   },
-  optionButton: {
-    borderWidth: 1,
-    borderColor: onboardingTheme.line,
-    borderRadius: onboardingTheme.radius,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
-    backgroundColor: onboardingTheme.background,
-  },
-  optionButtonSelected: {
-    borderColor: onboardingTheme.accent,
-  },
-  optionText: {
-    fontFamily: appFonts.regular,
-    color: onboardingTheme.accentMuted,
-    fontSize: 14,
-  },
-  optionTextSelected: {
-    fontFamily: appFonts.bold,
+  errorText: {
+    fontFamily: appFonts.semiBold,
     color: onboardingTheme.accent,
+    fontSize: 11,
+    marginTop: 10,
+    textAlign: "center",
   },
   actions: {
-    width: "100%",
-    gap: 12,
-  },
-  backButton: {
-    width: "100%",
-    borderWidth: 1,
-    borderColor: onboardingTheme.line,
-    borderRadius: onboardingTheme.radius,
-    paddingVertical: 14,
-    alignItems: "center",
-  },
-  backButtonDisabled: {
-    opacity: 0.45,
-  },
-  backText: {
-    ...mono,
-    color: onboardingTheme.accent,
-    fontSize: 12,
-  },
-  nextWrap: {
-    width: "100%",
-  },
-  footer: {
-    marginTop: 28,
-    gap: 12,
-    alignItems: "center",
-  },
-  quoteText: {
-    ...body,
-    color: onboardingTheme.accentDim,
-    fontStyle: "italic",
-    textAlign: "center",
-    fontSize: 13,
-    lineHeight: 18,
+    marginTop: 24,
   },
   skipWrap: {
+    marginTop: 16,
     alignItems: "center",
   },
   skipText: {
-    ...mono,
+    fontFamily: appFonts.semiBold,
     color: onboardingTheme.accentDim,
     fontSize: 12,
     textDecorationLine: "underline",

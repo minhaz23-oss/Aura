@@ -1,8 +1,26 @@
 import { supabase } from "@/lib/supabase";
 
+export type HunterAssessment = {
+  rank: string;
+  strength: number;
+  agility: number;
+  endurance: number;
+  vitality: number;
+  assessedAt: string;
+};
+
 export type UserOnboardingProfile = {
+  username: string;
   heightCm: string;
+  heightUnit: string;
+  heightFt: string;
+  heightIn: string;
   weightKg: string;
+  weightUnit: string;
+  weightLbs: string;
+  birthYear: string;
+  birthMonth: string;
+  birthDay: string;
   sleepHours: string;
   age: string;
   gender: string;
@@ -17,11 +35,21 @@ export type UserOnboardingProfile = {
   preferredWorkoutType: string;
   equipmentAccess: string;
   notes: string;
+  assessment?: HunterAssessment;
 };
 
 export const EMPTY_ONBOARDING_PROFILE: UserOnboardingProfile = {
+  username: "",
   heightCm: "",
+  heightUnit: "cm",
+  heightFt: "",
+  heightIn: "",
   weightKg: "",
+  weightUnit: "kg",
+  weightLbs: "",
+  birthYear: "",
+  birthMonth: "",
+  birthDay: "",
   sleepHours: "",
   age: "",
   gender: "",
@@ -108,6 +136,33 @@ export async function saveMainOnboardingProfile(
   }
 
   inMemoryProfiles[userId] = profile;
+  inMemoryCompletion[userId] = true;
+}
+
+export async function saveHunterAssessment(userId: string, assessment: HunterAssessment) {
+  const existing = (await getMainOnboardingProfile(userId)) ?? { ...EMPTY_ONBOARDING_PROFILE };
+  const merged: UserOnboardingProfile = {
+    ...existing,
+    assessment,
+  };
+
+  const { error } = await supabase.from(TABLE).upsert(
+    {
+      clerk_user_id: userId,
+      onboarding_data: merged,
+      is_onboarding_complete: true,
+      updated_at: new Date().toISOString(),
+    },
+    {
+      onConflict: "clerk_user_id",
+    },
+  );
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  inMemoryProfiles[userId] = merged;
   inMemoryCompletion[userId] = true;
 }
 

@@ -1,8 +1,9 @@
 import { useAuth } from "@clerk/clerk-expo";
-import { Redirect, Stack, type Href } from "expo-router";
+import { Redirect, Tabs, type Href } from "expo-router";
 import { useEffect, useState } from "react";
 import { StyleSheet, View } from "react-native";
 
+import { HunterTabBar } from "@/components/tabs/HunterTabBar";
 import { onboardingTheme } from "@/constants/onboarding-theme";
 import { isMainOnboardingComplete } from "@/lib/user-onboarding";
 
@@ -52,13 +53,19 @@ export default function TabsLayout() {
   }
 
   return (
-    <Stack
+    <Tabs
+      tabBar={(props) => <HunterTabBar {...props} />}
       screenOptions={{
         headerShown: false,
         animation: "none",
-        contentStyle: { backgroundColor: onboardingTheme.background },
+        sceneStyle: { backgroundColor: onboardingTheme.background },
       }}
-    />
+    >
+      <Tabs.Screen name="index" options={{ title: "Home" }} />
+      <Tabs.Screen name="quests" options={{ title: "Quests" }} />
+      <Tabs.Screen name="stats" options={{ title: "Stats" }} />
+      <Tabs.Screen name="profile" options={{ title: "Profile" }} />
+    </Tabs>
   );
 }
 

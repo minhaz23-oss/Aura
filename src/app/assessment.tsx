@@ -1,6 +1,6 @@
 import { useAuth } from "@clerk/clerk-expo";
 import { Redirect, useRouter, type Href } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import Animated, {
   Easing,
@@ -10,80 +10,64 @@ import Animated, {
 } from "react-native-reanimated";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { AuthPrimaryButton } from "@/components/auth/AuthPrimaryButton";
 import { appFonts } from "@/constants/fonts";
 import { onboardingTheme } from "@/constants/onboarding-theme";
-import { AuthPrimaryButton } from "@/components/auth/AuthPrimaryButton";
-import {
-  EMPTY_ONBOARDING_PROFILE,
-  getMainOnboardingProfile,
-  type UserOnboardingProfile,
-} from "@/lib/user-onboarding";
+import { saveHunterAssessment, type HunterAssessment } from "@/lib/user-onboarding";
+
+const HUNTER_RANK = "E";
+/** Starting stats rolled for new hunters */
+const STAT_VALUE_MIN = 1;
+const STAT_VALUE_MAX = 5;
+/** Progress bars always scale against 100 */
+const STAT_BAR_MAX = 100;
 
 type Attribute = {
-  key: "STR" | "AGI" | "END" | "VIT";
+  key: string;
+  label: string;
   value: number;
 };
 
-function parseNumber(value: string, fallback: number) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
+const BASE_ATTRIBUTES = [
+  { key: "strength", label: "Strength" },
+  { key: "agility", label: "Agility" },
+  { key: "endurance", label: "Endurance" },
+  { key: "vitality", label: "Vitality" },
+] as const;
 
-function clamp(min: number, value: number, max: number) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function buildAttributes(profile: UserOnboardingProfile): Attribute[] {
-  const activityBoost =
-    profile.activityLevel === "Advanced" ? 4 : profile.activityLevel === "Moderate" ? 2 : 0;
-  const days = parseNumber(profile.workoutDaysPerWeek, 3);
-  const duration = parseNumber(profile.workoutDurationMinutes, 30);
-  const sleep = parseNumber(profile.sleepHours, 7);
-  const age = parseNumber(profile.age, 24);
-
-  const str = clamp(3, Math.round(6 + days * 1.15 + duration / 18 + activityBoost), 20);
-  const agi = clamp(
-    3,
-    Math.round(5 + sleep * 0.9 + (profile.primaryGoal === "Endurance" ? 3 : 1)),
-    20,
+function randomStatValue() {
+  return (
+    Math.floor(Math.random() * (STAT_VALUE_MAX - STAT_VALUE_MIN + 1)) + STAT_VALUE_MIN
   );
-  const end = clamp(
-    3,
-    Math.round(5 + days * 0.9 + sleep * 0.7 + (profile.primaryGoal === "Fat loss" ? 2 : 0)),
-    20,
-  );
-  const vit = clamp(3, Math.round(8 + sleep * 0.9 - Math.max(0, age - 30) * 0.14), 20);
-
-  return [
-    { key: "STR", value: str },
-    { key: "AGI", value: agi },
-    { key: "END", value: end },
-    { key: "VIT", value: vit },
-  ];
 }
 
-function getRank(attributes: Attribute[]) {
-  const avg = attributes.reduce((sum, item) => sum + item.value, 0) / attributes.length;
-  if (avg >= 17) {
-    return "S";
-  }
-  if (avg >= 14) {
-    return "A";
-  }
-  if (avg >= 11) {
-    return "B";
-  }
-  if (avg >= 8) {
-    return "C";
-  }
-  return "E";
+function buildStarterAttributes(): Attribute[] {
+  return BASE_ATTRIBUTES.map((attr) => ({
+    key: attr.key,
+    label: attr.label,
+    value: randomStatValue(),
+  }));
+}
+
+function toAssessmentPayload(attributes: Attribute[]): HunterAssessment {
+  const byKey = Object.fromEntries(attributes.map((a) => [a.key, a.value]));
+  return {
+    rank: HUNTER_RANK,
+    strength: byKey.strength ?? 0,
+    agility: byKey.agility ?? 0,
+    endurance: byKey.endurance ?? 0,
+    vitality: byKey.vitality ?? 0,
+    assessedAt: new Date().toISOString(),
+  };
 }
 
 export default function AssessmentScreen() {
   const router = useRouter();
   const { isLoaded, isSignedIn, userId } = useAuth();
   const hasNavigatedRef = useRef(false);
-  const [profile, setProfile] = useState<UserOnboardingProfile>(EMPTY_ONBOARDING_PROFILE);
+  const [attributes] = useState(buildStarterAttributes);
+  const [isSaving, setIsSaving] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const panelOpacity = useSharedValue(0);
   const panelTranslateY = useSharedValue(16);
@@ -98,41 +82,23 @@ export default function AssessmentScreen() {
     panelTranslateY.value = withTiming(0, { duration: 500, easing: Easing.out(Easing.quad) });
   }, [panelOpacity, panelTranslateY]);
 
-  useEffect(() => {
-    let isMounted = true;
-
-    async function loadProfile() {
-      if (!userId) {
-        return;
-      }
-      try {
-        const data = await getMainOnboardingProfile(userId);
-        if (isMounted && data) {
-          setProfile(data);
-        }
-      } catch {
-        if (isMounted) {
-          setProfile(EMPTY_ONBOARDING_PROFILE);
-        }
-      }
-    }
-
-    void loadProfile();
-    return () => {
-      isMounted = false;
-    };
-  }, [userId]);
-
-  const attributes = useMemo(() => buildAttributes(profile), [profile]);
-  const rank = useMemo(() => getRank(attributes), [attributes]);
-
-  const handleContinue = useCallback(() => {
-    if (hasNavigatedRef.current) {
+  const handleContinue = useCallback(async () => {
+    if (hasNavigatedRef.current || !userId || isSaving) {
       return;
     }
-    hasNavigatedRef.current = true;
-    router.replace("/welcome" as Href);
-  }, [router]);
+
+    setErrorMessage(null);
+    setIsSaving(true);
+    try {
+      await saveHunterAssessment(userId, toAssessmentPayload(attributes));
+      hasNavigatedRef.current = true;
+      router.replace("/welcome" as Href);
+    } catch {
+      setErrorMessage("Unable to save assessment. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
+  }, [attributes, isSaving, router, userId]);
 
   if (!isLoaded) {
     return <View style={styles.loadingScreen} />;
@@ -152,7 +118,7 @@ export default function AssessmentScreen() {
 
         <Animated.View style={[styles.rankPanel, panelStyle]}>
           <Text style={styles.rankTitle}>RANK</Text>
-          <Text style={styles.rankValue}>{rank}</Text>
+          <Text style={styles.rankValue}>{HUNTER_RANK}</Text>
         </Animated.View>
 
         <Animated.View style={[styles.attrCard, panelStyle]}>
@@ -160,18 +126,26 @@ export default function AssessmentScreen() {
           {attributes.map((attr) => (
             <View key={attr.key} style={styles.attrRow}>
               <View style={styles.attrTop}>
-                <Text style={styles.attrKey}>{attr.key}</Text>
+                <Text style={styles.attrKey}>{attr.label}</Text>
                 <Text style={styles.attrValue}>{attr.value}</Text>
               </View>
               <View style={styles.barTrack}>
-                <View style={[styles.barFill, { width: `${(attr.value / 20) * 100}%` }]} />
+                <View
+                  style={[styles.barFill, { width: `${(attr.value / STAT_BAR_MAX) * 100}%` }]}
+                />
               </View>
             </View>
           ))}
         </Animated.View>
 
+        {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+
         <Animated.View style={panelStyle}>
-          <AuthPrimaryButton label="Start the journey" onPress={handleContinue} />
+          <AuthPrimaryButton
+            label={isSaving ? "SAVING..." : "Start the journey"}
+            onPress={handleContinue}
+            disabled={isSaving}
+          />
         </Animated.View>
       </View>
     </SafeAreaView>
@@ -264,7 +238,8 @@ const styles = StyleSheet.create({
     fontFamily: appFonts.semiBold,
     color: onboardingTheme.accentMuted,
     fontSize: 12,
-    letterSpacing: 1.2,
+    letterSpacing: 0.4,
+    textTransform: "capitalize",
   },
   attrValue: {
     fontFamily: appFonts.semiBold,
@@ -281,5 +256,11 @@ const styles = StyleSheet.create({
     height: "100%",
     backgroundColor: onboardingTheme.accent,
     borderRadius: 999,
+  },
+  errorText: {
+    fontFamily: appFonts.semiBold,
+    color: onboardingTheme.accent,
+    fontSize: 12,
+    textAlign: "center",
   },
 });
